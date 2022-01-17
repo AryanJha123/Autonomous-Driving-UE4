@@ -39,7 +39,15 @@ from tf_agents.specs import ArraySpec
 from unreal_engine.classes import ActorComponent, Actor, Blueprint 
 from tf_agents.trajectories import time_step as ts
 
-# basically the amount of epochs
+
+blueprint = ue.load_object(Blueprint, '/Game/VehicleBP/Sedan/Sedan.Sedan')
+BpAsActor = blueprint.GeneratedClass.get_cdo()
+
+AgentScore = BpAsActor.Score 
+
+step_type = tf_agents.specs.ArraySpec((), np.int32)
+# Potential steps: First, Mid, or Last
+
 num_iterations = 2000
 initial_collect_steps = 100  
 collect_steps_per_iteration = 1 
@@ -57,23 +65,12 @@ algorithm_Backward = False
 algorithm_Left = False
 algorithm_Right = False
 
-
-step_type = tf_agents.specs.ArraySpec((), np.int32)
-# Potential steps: First, Mid, or Last
-
-blueprint = ue.load_object(Blueprint, '/Game/VehicleBP/Sedan/Sedan.Sedan')
-BpAsActor = blueprint.GeneratedClass.get_cdo()
-
-
 class MovementSwitch:
     def switch(self, moveindex):
-        if moveindex[0] < 0:
-            moveindex[0] += 10
-        default = "Invalid day"
-        if moveindex[0] >= 0:
-            return getattr(self, 'Move' + str(moveindex[0]), lambda: default)()
-        if moveindex[0] < 0:
-            return getattr(self, 'BackMove' + str(abs(moveindex[0])), lambda: default)()
+        if moveindex >= 0:
+            return getattr(self, 'Move' + str(moveindex), lambda: default)()
+        if moveindex < 0:
+            return getattr(self, 'BackMove' + str(abs(moveindex)), lambda: default)()
     def Move0(self):
         BpAsActor.Forward = False
         BpAsActor.Backward = False
@@ -151,18 +148,21 @@ class Driving(py_environment.PyEnvironment):
       # a new episode.
       return self.reset()
     print('yay')
-    if BpAsActor.hit == True:
-        reward = self.state 
-        return ts.termination(np.array([self.state], dtype=np.int32), reward)
+    if BpAsActor.Done == True:
+        reward = AgentScore 
+        return ts.termination(reward)
+    elif AgentScore <= -100:
+        reward = AgentScore 
+        return ts.termination(reward)
     else:
-        return ts.transition(np.array([self.state], dtype=np.int32), reward=0.0, discount=1.0)
+        return ts.transition(np.array([self._state], dtype=np.int32),reward=AgentScore, discount=0.1)
     #if action[2] == 1:
         #BpAsActor.JumpFunction()    
 
-action = np.array([1], dtype=np.int32)
+#action = np.array([1], dtype=np.int32)
 
-env = Driving()
-tf_env = tf_py_environment.TFPyEnvironment(env)
+environment = Driving()
+tf_env = tf_py_environment.TFPyEnvironment(environment)
 # reset() creates the initial time_step after resetting the environment.
 time_step = tf_env.reset()
 num_steps = 3
@@ -177,11 +177,29 @@ class test(ActorComponent):
         BpAsActor.Backward = False
         BpAsActor.Left = False
         BpAsActor.Right = False
-        env = Driving()
-        time_step = env.reset()
+        environment = Driving()
+        time_step = environment.reset()
         #action = np.array([0,0], dtype=np.int32)
     #def BeginPlay(self):
     def Tick(self):
         #print(action)                     
-        time_step = env.step(action)
-        print(action)
+        get_new_card_action = np.array(3, dtype=np.int32)
+        end_round_action = np.array(-3, dtype=np.int32)
+
+        time_step = environment.reset()
+        print(time_step)
+        cumulative_reward = time_step.reward
+
+        for _ in range(10):
+          time_step = environment.step(get_new_card_action)
+          print(time_step)
+          cumulative_reward += time_step.reward
+
+        time_step = environment.step(end_round_action)
+        print(time_step)
+        cumulative_reward += time_step.reward
+        print('Final Reward = ', cumulative_reward)
+        with tf.device('/device:GPU:0'):
+          a = tf.constant([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+          b = tf.constant([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+          c = tf.matmul(a, b)
