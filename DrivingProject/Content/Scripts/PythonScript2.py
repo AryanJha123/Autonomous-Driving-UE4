@@ -120,13 +120,15 @@ class MovementSwitch:
         BpAsActor.Handbrake
         BpAsActor.HandbrakeInput = False
 
-class ShootGameEnv(py_environment.PyEnvironment):
+
+
+class Driving(py_environment.PyEnvironment):
 
   def __init__(self):
     self._action_spec = BoundedArraySpec((), np.int32, minimum=-5, maximum=5, name='action')
-    # Potential Actions: #0 is Move Forward (Range of -1 to 1) (speed), #1 is Move Right (Range of -1 to 1) (speed), #2 is Shoot (Range of 0 to 1) (shoot or don't shoot)    
-    self._observation_spec = ArraySpec((6,), np.float64, name='observation')
-    # Things that are being observed: X position, Y position, Z position, Health, Ammo, Score
+    # Potential Actions: #0 is Move Forward (Range of -1 to 1) (speed), #1 is Move Right (Range of -1 to 1) (speed) 
+    self._observation_spec = ArraySpec((5,2), np.float64, name='observation')
+    # Things that are being observed: Camera 1 x + y, Camera 2 x + y, Camera 3 x + y, Camera 4 x + y, Speed
     self.state = 0
     self.episode_ended = False
 
@@ -157,22 +159,25 @@ class ShootGameEnv(py_environment.PyEnvironment):
     #if action[2] == 1:
         #BpAsActor.JumpFunction()    
 
-action = np.array([3], dtype=np.int32)
+action = np.array([1], dtype=np.int32)
 
-env = ShootGameEnv()
+env = Driving()
 tf_env = tf_py_environment.TFPyEnvironment(env)
 # reset() creates the initial time_step after resetting the environment.
 time_step = tf_env.reset()
 num_steps = 3
 transitions = []
 reward = 0
+
+data_spec =  (tf.TensorSpec([5], tf.float32, 'action'),(tf.TensorSpec([1], tf.float32, 'speed'),tf.TensorSpec([4, 2], tf.float32, 'camera')))
+
 class test(ActorComponent):
     def __init__(self):
         BpAsActor.Forward = False
         BpAsActor.Backward = False
         BpAsActor.Left = False
         BpAsActor.Right = False
-        env = ShootGameEnv()
+        env = Driving()
         time_step = env.reset()
         #action = np.array([0,0], dtype=np.int32)
     #def BeginPlay(self):
