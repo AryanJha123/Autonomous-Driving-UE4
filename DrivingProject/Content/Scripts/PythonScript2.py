@@ -12,23 +12,6 @@ import PIL.Image
 import tensorflow as tf
 
 import tf_agents
-from tf_agents.agents.dqn import dqn_agent
-from tf_agents.drivers import py_driver
-from tf_agents.environments import suite_gym
-from tf_agents.environments import py_environment
-from tf_agents.environments import tf_environment
-from tf_agents.environments import tf_py_environment
-from tf_agents.eval import metric_utils
-from tf_agents.metrics import tf_metrics
-from tf_agents.networks import sequential
-from tf_agents.policies import py_tf_eager_policy
-from tf_agents.policies import random_tf_policy
-from tf_agents.replay_buffers import reverb_replay_buffer
-from tf_agents.replay_buffers import reverb_utils
-from tf_agents.trajectories import trajectory
-from tf_agents.specs import tensor_spec
-from tf_agents.specs import array_spec
-from tf_agents.utils import common
 
 #from tf_agents.replay_buffers import py_uniform_replay_buffer
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
@@ -54,7 +37,9 @@ from tf_agents.utils import common
 from tf_agents.agents.reinforce import reinforce_agent
 from tf_agents.drivers import py_driver
 from tf_agents.environments import suite_gym
+from tf_agents.environments import py_environment
 from tf_agents.environments import tf_py_environment
+from tf_agents.drivers import dynamic_step_driver
 from tf_agents.networks import actor_distribution_network
 from tf_agents.policies import py_tf_eager_policy
 from tf_agents.replay_buffers import reverb_replay_buffer
@@ -93,7 +78,7 @@ algorithm_Right = False
 class MovementSwitch:
     def switch(self, moveindex):
         if moveindex >= 0:
-            return getattr(self, 'Move' + str(moveindex), lambda: default)()
+            return getattr(self, 'Move' + str(int(moveindex)), lambda: default)()
         if moveindex < 0:
             return getattr(self, 'BackMove' + str(abs(moveindex)), lambda: default)()
     def Move0(self):
@@ -147,9 +132,9 @@ class MovementSwitch:
 class Driving(py_environment.PyEnvironment):
 
   def __init__(self):
-    self._action_spec = BoundedArraySpec((), np.int32, minimum=0, maximum=10, name='action')
+    self._action_spec = BoundedArraySpec((1,), np.int32, minimum=0, maximum=10, name='action')
     # Potential Actions: #0 is Move Forward (Range of -1 to 1) (speed), #1 is Move Right (Range of -1 to 1) (speed) 
-    self._observation_spec = ArraySpec((13,), np.float32, name='observation')
+    self._observation_spec = ArraySpec((1,), np.int32, name='observation')
     # Things that are being observed: Camera 1 x r,g,b, Camera 1 y r,g,b, Camera 2 x r,g,b, Camera 2 y r,g,b, Camera 3 x r,g,b, Camera 3 y r,g,b, Camera 4 x r,g,b, Camera 4 y r,g,b, Speed
     self.state = 0
     self.episode_ended = False
@@ -224,24 +209,35 @@ def compute_avg_return(environment, policy, num_episodes=10):
   avg_return = total_return / num_episodes
   return avg_return.numpy()[0]
 
-#data_spec =  (tf.TensorSpec([5], tf.float32, 'action'),(tf.TensorSpec([1], tf.float32, 'speed'),tf.TensorSpec([4, 2], tf.float32, 'camera')))
-#eplay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(data_spec, batch_size=batch_size, max_length=1000)
-
-#data_spec = (tf.TensorSpec([5], tf.float32, 'action'),(tf.TensorSpec([12, 2] tf.float32, 'camera')))
 data_spec =  (
-        tf.TensorSpec([5], tf.float32, 'action'),
+        tf.TensorSpec([1], tf.int32, 'action'),
         (
-            tf.TensorSpec([12, 2], tf.float32, 'camera')
+            tf.TensorSpec([1], tf.int32, 'lidar'),
+            tf.TensorSpec([1], tf.int32, 'camera')
         )
 )
 
 batch_size = 32
 max_length = 1000
+replay_buffer_capacity = 1000
 
 replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
     data_spec,
     batch_size=batch_size,
     max_length=max_length)
+
+action = tf.constant(1 * np.ones(
+    data_spec[0].shape.as_list(), dtype=np.int32))
+lidar = tf.constant(
+    2 * np.ones(data_spec[1][0].shape.as_list(), dtype=np.int32))
+camera = tf.constant(
+    3 * np.ones(data_spec[1][1].shape.as_list(), dtype=np.int32))
+
+values = (action, (lidar, camera))
+values_batched = tf.nest.map_structure(lambda t: tf.stack([t] * batch_size),
+                                       values)
+
+replay_buffer.add_batch(values_batched)
 
 def collect_episode(environment, policy, num_episodes):
 
@@ -254,6 +250,7 @@ def collect_episode(environment, policy, num_episodes):
   initial_time_step = environment.reset()
   driver.run(initial_time_step)
 
+
 class test(ActorComponent):
     def __init__(self):
         BpAsActor.Forward = False
@@ -262,6 +259,12 @@ class test(ActorComponent):
         BpAsActor.Right = False
         environment = Driving()
         time_step = environment.reset()
+        
+        values = (action, (lidar, camera))
+        values_batched = tf.nest.map_structure(lambda t: tf.stack([t] * batch_size),
+                                       values)
+
+        replay_buffer.add_batch(values_batched)
         #action = np.array([0,0], dtype=np.int32)
     def BeginPlay(self):
         #try:
@@ -269,13 +272,12 @@ class test(ActorComponent):
         #except:
          # pass
         # Evaluate the agent's policy once before training.
+        
         avg_return = compute_avg_return(environment, tf_agent.policy, num_eval_episodes)
         returns = [avg_return]
-
-    def Tick(self):
-        environment.observation_spec = np.array([1,1,1,1,1,1,1,1,1,1,1,BpAsActor.Speed]) 
+        #environment.observation_spec = np.array([1,1,1,1,1,1,1,1,1,1,1,BpAsActor.Speed], dtype=np.int32) 
         # (Optional) Optimize by wrapping some of the code in a graph using TF function.
-        tf_agent.train = common.function(tf_agent.train)
+        #tf_agent.train = common.function(tf_agent.train)
 
         # Reset the train step
         tf_agent.train_step_counter.assign(0)
@@ -283,33 +285,48 @@ class test(ActorComponent):
         # Evaluate the agent's policy once before training.
         avg_return = compute_avg_return(environment, tf_agent.policy, num_eval_episodes)
         returns = [avg_return]
-
-        for _ in range(num_iterations):
+        print(tf_agent.policy)
 
           # Collect a few episodes using collect_policy and save to the replay buffer.
-         # collect_episode(environment, tf_agent.collect_policy, collect_episodes_per_iteration)
+        collect_episode(environment, tf_agent.collect_policy, collect_episodes_per_iteration)
 
           # Use data from the buffer and update the agent's network.
-          iterator = iter(replay_buffer.as_dataset(sample_batch_size=1))
-          trajectories, _ = next(iterator)
-          train_loss = tf_agent.train(experience=trajectories)  
+    def Tick(self):
+        replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+        tf_agent.collect_data_spec,
+        batch_size=tf_env.batch_size,
+        max_length=replay_buffer_capacity)
 
-          replay_buffer.clear()
+        # Add an observer that adds to the replay buffer:
+        replay_observer = [replay_buffer.add_batch]
 
-          step = tf_agent.train_step_counter.numpy()
+        collect_steps_per_iteration = 10
+        collect_op = dynamic_step_driver.DynamicStepDriver(
+          tf_env,
+          tf_agent.collect_policy,
+          observers=replay_observer,
+          num_steps=collect_steps_per_iteration).run()
 
-          if step % log_interval == 0:
-            print('step = {0}: loss = {1}'.format(step, train_loss.loss))
+        dataset = replay_buffer.as_dataset(sample_batch_size=4,num_steps=2)
 
-          if step % eval_interval == 0:
-            avg_return = compute_avg_return(environment, tf_agent.policy, num_eval_episodes)
-            print('step = {0}: Average Return = {1}'.format(step, avg_return))
-            returns.append(avg_return)
-        
-        action = tf.constant(1 * np.ones(data_spec[0].shape.as_list(), dtype=np.float32))
-        camera = tf.constant(3 * np.ones(data_spec[1][1].shape.as_list(), dtype=np.float32))
+        iterator = iter(dataset)
 
-        values = (action, camera)
-        values_batched = tf.nest.map_structure(lambda t: tf.stack([t] * batch_size),values)
+        num_train_steps = 10
 
-        replay_buffer.add_batch(values_batched)
+        for _ in range(num_train_steps):
+            trajectories, _ = next(iterator)
+            loss = tf_agent.train(experience=trajectories)
+        replay_buffer.clear()
+
+        step = tf_agent.train_step_counter.numpy()
+
+        if step % log_interval == 0:
+          print('step = {0}: loss = {1}'.format(step, train_loss.loss))
+
+        if step % eval_interval == 0:
+          avg_return = compute_avg_return(environment, tf_agent.policy, num_eval_episodes)
+          print('step = {0}: Average Return = {1}'.format(step, avg_return))
+          returns.append(avg_return)
+        #action = tf.constant(1 * np.ones(data_spec[0].shape.as_list(), dtype=np.float32))
+        #camera = tf.constant(3 * np.ones(data_spec[1][1].shape.as_list(), dtype=np.float32))
+
